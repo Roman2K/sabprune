@@ -22,7 +22,7 @@ class App
     ##
     # Cleanup
     #
-    imports.delete(nil).each do |imp|
+    imports.delete(nil) { [] }.each do |imp|
       imp.log.warn "found ORPHAN dir"
     end
     %i[empty junk imported].each do |st|
@@ -69,13 +69,18 @@ class App
     commands.wait
     commands.last_statuses.each do |cmd, st|
       imp = cmd.obj
+      imp.log[status: st].info "import command finished"
+      if st.error?
+        imp.log.error "import command failed, not checking directory"
+        next
+      end
       if !imp.dir.local.directory?
-        imp.log[status: st].info "import command completed"
+        imp.log.info "import succeeded"
         next
       end
       imp.log.warn "directory still present, checking PVR"
       if !imp.entity.fetch("hasFile")
-        imp.log.error "PVR doesn't have files: import command failed"
+        imp.log.error "PVR doesn't have files: import failed"
         next
       end
       imp.log.info "PVR has files: deleting" do
@@ -111,9 +116,10 @@ class App
 
   private def find_imports
     entries = {}.tap do |h|
-      @ng.glob("*").each do |f|
+      @ng.glob "*" do |f|
+        next if !f.directory?
         basename = f.basename.to_s
-        next if f.directory? && basename == "incomplete"
+        next if basename == "incomplete"
         imp = Import.new
         imp.dir = Import::Dir[f, @mnt + f.relative_path_from(@ng)]
         imp.log = @log[mnt: imp.dir.mnt.to_s]
@@ -192,8 +198,6 @@ class Commands < Array
       tbl.write_to io
       io.flush
     end
-
-    io.flush
   end
 
   def statuses
@@ -239,7 +243,10 @@ class Commands < Array
 end
 
 Status = Struct.new(:name) do
-  def final?; name == "completed" end
+  PROCESSING = %w[started queued]
+  def processing?; PROCESSING.include? name end
+  def final?; !processing? end
+  def error?; final? && name != "completed" end
   def to_s; name.to_s end
 end
 
