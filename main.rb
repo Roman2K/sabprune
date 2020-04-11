@@ -116,7 +116,7 @@ class App
 
   private def find_imports
     entries = {}.tap do |h|
-      @ng.glob "*" do |f|
+      @ng.glob("*").sort.each do |f|
         next if !f.directory?
         basename = f.basename.to_s
         next if basename == "incomplete"
@@ -124,6 +124,11 @@ class App
         imp.dir = Import::Dir[f, @mnt + f.relative_path_from(@ng)]
         imp.log = @log[mnt: imp.dir.mnt.to_s]
         imp.status = imp.dir.status
+        basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
+        if found = h[basename]
+          imp.log[found: found.dir.mnt.basename].
+            warn "superseding similarly-named dir, would delete on next run"
+        end
         h[basename] = imp
       end
     end
