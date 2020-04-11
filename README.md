@@ -11,8 +11,8 @@ This program compensates for such mishaps. Also deletes empty \_UNPACK_ dirs and
 those left with only raw ng article files.
 
 Directories are matched against each PVR's grab and import history. Necessary
-imports are triggered by running the command in the corresponding PVR and waited
-for until completion. Files left are double checked afterwards.
+imports are triggered and waited for until completion. Files left are double
+checked afterwards.
 
 Example output:
 

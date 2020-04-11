@@ -8,6 +8,10 @@ class App
     verbose: false,
   }
 
+  def self.fu(*args, **opts, &block)
+    FU.public_send *args, **FU_OPTS, **opts, &block
+  end
+
   def initialize(ng, mnt, pvrs: {}, log:)
     @ng = Pathname ng
     @mnt = Pathname mnt
@@ -28,7 +32,7 @@ class App
     %i[empty junk imported].each do |st|
       imports.delete(st) { [] }.each do |imp|
         imp.log.info "deleting #{st.upcase} dir" do
-          fu :rm_r, imp.dir.local
+          App.fu :rm_r, imp.dir.local
         end
       end
     end
@@ -64,29 +68,10 @@ class App
     end
 
     ##
-    # Wait for imports
+    # Check results
     #
     commands.wait
-    commands.last_statuses.each do |cmd, st|
-      imp = cmd.obj
-      imp.log[status: st].info "import command finished"
-      if st.error?
-        imp.log.error "import command failed, not checking directory"
-        next
-      end
-      if !imp.dir.local.directory?
-        imp.log.info "import succeeded"
-        next
-      end
-      imp.log.warn "directory still present, checking PVR"
-      if !imp.entity.fetch("hasFile")
-        imp.log.error "PVR doesn't have files: import failed"
-        next
-      end
-      imp.log.info "PVR has files: deleting" do
-        fu :rm_r, imp.dir.local
-      end
-    end
+    commands.last_statuses.each { |cmd, st| cmd.obj.check_result st }
 
     ##
     # Sanity check
@@ -94,10 +79,6 @@ class App
     unless imports.empty?
       @log.error "unknown imports left: %s" % [PP.pp(imports, "").chomp]
     end
-  end
-
-  private def fu(*args, **opts, &block)
-    FU.public_send *args, **FU_OPTS, **opts, &block
   end
 
   private def stats(imports)
@@ -122,7 +103,7 @@ class App
         next if basename == "incomplete"
         imp = Import.new
         imp.dir = Import::Dir[f, @mnt + f.relative_path_from(@ng)]
-        imp.log = @log[mnt: imp.dir.mnt.to_s]
+        imp.log = @log[mnt: imp.dir.mnt]
         imp.status = imp.dir.status
         basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
         if found = h[basename]
@@ -182,7 +163,7 @@ class Commands < Array
     print.resume
   end
     
-  def print_live_statuses(io)
+  private def print_live_statuses(io)
     io = Utils::IOUtils::Refresh.new io
     last = Time.now
 
@@ -198,7 +179,7 @@ class Commands < Array
         each { |s, st| tbl << [s, st] }
 
       io.puts
-      io.puts "Last refresh: %s" % [Utils::Fmt.duration(elapsed)]
+      io.puts "Last refresh: %s ago" % [Utils::Fmt.duration(elapsed)]
       io.puts "Running commands:"
       tbl.write_to io
       io.flush
@@ -262,6 +243,30 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     pvr.entity entity_id
   end
 
+  def check_result(st)
+    log[status: st].info "import command finished"
+
+    if st.error?
+      log.error "import command failed, not checking directory"
+      return
+    end
+
+    if !dir.local.directory?
+      log.info "import succeeded"
+      return
+    end
+
+    log.warn "directory still present, checking PVR"
+    if !entity.fetch("hasFile")
+      log.error "PVR doesn't have files: import failed"
+      return
+    end
+
+    log.info "PVR has files: deleting" do
+      App.fu :rm_rf, dir.local  # ignore errors due to late deletion by the PVR
+    end
+  end
+
   Dir = Struct.new :local, :mnt do
     def status
       case
@@ -289,8 +294,8 @@ if $0 == __FILE__
   log = Utils::Log.new $stderr, level: :info
   log.level = :debug if ENV["DEBUG"] == "1"
   pvrs = config[:pvrs].to_hash.each_with_object({}) do |(name, url), h|
-    h[name] = Utils::PVR.const_get(name.capitalize).new(URI(url), log: log)
+    h[name] = Utils::PVR.const_get(name).new(URI(url), log: log)
   end
-  app = App.new config["ng"], config["mnt"], pvrs: pvrs, log: log
+  app = App.new config[:ng], config[:mnt], pvrs: pvrs, log: log
   MetaCLI.new(ARGV).run app
 end
