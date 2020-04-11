@@ -1,0 +1,5 @@
+ng: "~/windata/ng"
+mnt: "/ng"
+pvrs:
+  radarr: "http://radarr.home/api?apikey=SECRET"
+  sonarr: "http://sonarr.home/api?apikey=SECRET"

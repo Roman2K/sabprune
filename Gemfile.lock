@@ -1,0 +1,27 @@
+GIT
+  remote: https://github.com/Roman2K/metacli.git
+  revision: 3eb064e27e1e7b2a19280199b1e76e49ccdda634
+  specs:
+    metacli (0.1.0)
+
+GIT
+  remote: https://github.com/Roman2K/utils-ruby.git
+  revision: 2fae52e388cf85f06ffc88c25d9b4f12e096f404
+  specs:
+    utils-ruby (0.1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    minitest (5.14.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  metacli!
+  minitest
+  utils-ruby!
+
+BUNDLED WITH
+   2.1.4
