@@ -1,5 +1,6 @@
 require 'utils'
 require 'fileutils'
+require 'pp'
 
 class App
   FU = FileUtils
@@ -52,7 +53,7 @@ class App
         if cmd
           imp_log[id: cmd.fetch("id")].info "found running import command"
         else
-          imp_log.warn "running command"
+          imp_log.info "running command"
           cmd = pvr.downloaded_scan imp.dir.mnt,
             download_client_id: imp.nzoid, import_mode: 'Move'
         end
@@ -86,9 +87,7 @@ class App
       h[st] =
         case st
         when :grabbed, :imported
-          imps.
-            group_by { |imp| imp.pvr.class.name.split("::").last }.
-            transform_values &:size
+          imps.group_by { |imp| imp.pvr.name }.transform_values &:size
         else
           imps.size
         end
@@ -239,6 +238,8 @@ end
 class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
   keyword_init: true,
 )
+  IMPORT_GRACE = 4 * 3600
+
   def entity
     pvr.entity entity_id
   end
@@ -256,13 +257,18 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
       return
     end
 
-    log.warn "directory still present, checking PVR"
     if !entity.fetch("hasFile")
-      log.error "PVR doesn't have files: import failed"
+      if (age = dir.contents_age) > IMPORT_GRACE
+        log.error "PVR doesn't have files after %s: import failed" \
+          % [Utils::Fmt.duration(age)]
+      else
+        log.warn "directory still present, allowing %s" \
+          % [Utils::Fmt.duration(IMPORT_GRACE - age)]
+      end
       return
     end
 
-    log.info "PVR has files: deleting" do
+    log.info "deleting leftover files after import" do
       App.fu :rm_rf, dir.local  # ignore errors due to late deletion by the PVR
     end
   end
@@ -273,6 +279,10 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
       when empty? then :empty
       when junk? then :junk
       end
+    end
+
+    def contents_age
+      [local, *local.glob("*")].map(&:mtime).max
     end
 
     private def empty?
