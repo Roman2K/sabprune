@@ -8,6 +8,7 @@ class App
     noop: false,
     verbose: false,
   }
+  IMPORT_GRACE = 4 * 3600
 
   def self.fu(*args, **opts, &block)
     FU.public_send *args, **FU_OPTS, **opts, &block
@@ -17,8 +18,13 @@ class App
     @ng = Pathname ng
     @mnt = Pathname mnt
     @pvrs = pvrs
+    @import_grace = IMPORT_GRACE
+    @status_io = $stdout
     @log = log
   end
+
+  attr_accessor :import_grace
+  attr_accessor :status_io
 
   def cmd_prune
     imports = find_imports.group_by &:status
@@ -64,7 +70,7 @@ class App
     ##
     # Refresh statuses
     #
-    if (io = $stdout).tty?
+    if @status_io.tty?
       commands.live_statuses(io) { |imp| imp.dir.mnt }
     end
 
@@ -72,7 +78,9 @@ class App
     # Check results
     #
     commands.wait
-    commands.last_statuses.each { |cmd, st| cmd.obj.check_result st }
+    commands.last_statuses.each do |cmd, st|
+      cmd.obj.check_result st, grace: @import_grace
+    end
 
     ##
     # Sanity check
@@ -129,8 +137,8 @@ class App
         imp.nzoid = ev.fetch("downloadId")
         imp.status = ev.fetch("eventType").yield_self do |st|
           case st
-          when 'grabbed' then :grabbed
-          when 'downloadFolderImported' then :imported
+          when ST_GRABBED then :grabbed
+          when ST_IMPORTED then :imported
           else raise "unknown status: %p" % [st]
           end
         end
@@ -138,6 +146,9 @@ class App
     end
     entries.values
   end
+
+  ST_GRABBED = 'grabbed'
+  ST_IMPORTED = 'downloadFolderImported'
 end
 
 class Commands < Array
@@ -227,24 +238,23 @@ class Commands < Array
   end
 end
 
-Status = Struct.new(:name) do
+class Status < Struct.new :name
   PROCESSING = %w[started queued]
+  COMPLETED = "completed"
   def processing?; PROCESSING.include? name end
   def final?; !processing? end
-  def error?; final? && name != "completed" end
+  def error?; final? && name != COMPLETED end
   def to_s; name.to_s end
 end
 
 class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
   keyword_init: true,
 )
-  IMPORT_GRACE = 4 * 3600
-
   def entity
     pvr.entity entity_id
   end
 
-  def check_result(st)
+  def check_result(st, grace:)
     log[status: st].info "import command finished"
 
     if st.error?
@@ -258,12 +268,12 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     end
 
     if !entity.fetch("hasFile")
-      if (age = dir.contents_age) > IMPORT_GRACE
+      if (age = Time.now - dir.contents_mtime) > grace
         log.error "PVR doesn't have files after %s: import failed" \
           % [Utils::Fmt.duration(age)]
       else
         log.warn "directory still present, allowing %s" \
-          % [Utils::Fmt.duration(IMPORT_GRACE - age)]
+          % [Utils::Fmt.duration(grace - age)]
       end
       return
     end
@@ -281,8 +291,8 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
       end
     end
 
-    def contents_age
-      [local, *local.glob("*")].map(&:mtime).max
+    def contents_mtime
+      local.glob("*").map(&:mtime).max || local.mtime
     end
 
     private def empty?
