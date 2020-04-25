@@ -9,6 +9,7 @@ class App
     verbose: false,
   }
   IMPORT_GRACE = 4 * 3600
+  UNPACK_GRACE = 2 * 3600
 
   def self.fu(*args, **opts, &block)
     FU.public_send *args, **FU_OPTS, **opts, &block
@@ -19,12 +20,15 @@ class App
     @mnt = Pathname mnt
     @pvrs = pvrs
     @import_grace = IMPORT_GRACE
+    @unpack_grace = UNPACK_GRACE
     @status_io = $stdout
     @log = log
   end
 
-  attr_accessor :import_grace
-  attr_accessor :status_io
+  attr_accessor \
+    :import_grace,
+    :unpack_grace,
+    :status_io
 
   def cmd_prune
     imports = find_imports.group_by &:status
@@ -104,13 +108,20 @@ class App
 
   private def find_imports
     entries = {}.tap do |h|
-      @ng.glob("*").sort.each do |f|
+      @ng.glob("*").sort.reverse.each do |f|
         next if !f.directory?
         basename = f.basename.to_s
         next if basename == "incomplete"
         imp = Import.new
         imp.dir = Import::Dir[f, @mnt + f.relative_path_from(@ng)]
         imp.log = @log[mnt: imp.dir.mnt]
+        if basename =~ /^_UNPACK_/
+          basename = $'
+          if (rem = @unpack_grace - (Time.now - imp.dir.contents_mtime)) > 0
+            imp.log.debug "unpacking, allowing %s" % [Utils::Fmt.duration(rem)]
+            next
+          end
+        end
         imp.status = imp.dir.status
         basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
         if found = h[basename]
@@ -292,7 +303,7 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     end
 
     def contents_mtime
-      local.glob("*").map(&:mtime).max || local.mtime
+      local_children.map(&:mtime).max || local.mtime
     end
 
     private def empty?
@@ -301,9 +312,13 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     end
 
     private def junk?
-      local.enum_for(:glob, "*").all? do |f|
+      local_children.all? do |f|
         f.file? && f.basename.to_s =~ /^\d+-\d+(\.\d+)+$/
       end
+    end
+
+    private def local_children
+      local.enum_for(:glob, "*")
     end
   end
 end

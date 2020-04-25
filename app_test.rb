@@ -27,22 +27,6 @@ class AppTest < Minitest::Test
     assert_log :info, "deleting empty.*some empt"
   end
 
-  def test_unpack
-    dir = "ep01"
-    @ng.join("_UNPACK_#{dir}").tap do |d|
-      d.mkdir
-      d.join("some file").write "test"
-    end
-    @pvr.add_ev App::ST_GRABBED, {
-      'date' => '2020',
-      'data' => {'downloadClient' => "sabnzbd"},
-      'downloadId' => 'nzoid01',
-      'sourceTitle' => dir,
-    }
-
-    @app.cmd_prune
-  end
-
   def test_import_success_leftovers
     dir = "ep02"
     @ng.join(dir).tap do |d|
@@ -60,13 +44,15 @@ class AppTest < Minitest::Test
 
     @app.cmd_prune
 
-    assert_equal %W[ #{MNT}/ep02 ], @pvr.imported
-    assert_log :info, "deleting leftover files.+mnt=#{MNT}/ep02"
+    assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
+    assert_log :info, "deleting leftover files.+mnt=#{MNT}/#{dir}"
   end
 
   def test_import_success_no_hasFile_grace
+    @app.import_grace = 4 * 3600
+
     dir = "ep03"
-    @ng.join(dir).tap do |d|
+    local_dir = @ng.join(dir).tap do |d|
       d.mkdir
       d.join("some file").write "test"
     end
@@ -79,33 +65,59 @@ class AppTest < Minitest::Test
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
     @pvr.set_has_file dir, false
 
+    ##
+    # Grace NOT expired
+    #
     @app.cmd_prune
 
-    assert_log :warn, ".*\\bstill present, allowing.+mnt=#{MNT}/ep03"
+    assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
+    assert_log :warn, ".*\\bstill present, allowing.+mnt=#{MNT}/#{dir}"
+
+    ##
+    # Grace expired
+    #
+    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 5 * 3600
+
+    @app.cmd_prune
+
+    assert_equal %W[ #{MNT}/#{dir} ] * 2, @pvr.imported
+    assert_log :error, ".*\\bdoesn't have files after.+mnt=#{MNT}/#{dir}"
   end
 
-  def test_import_success_no_hasFile_grace_expired
-    @app.import_grace = 4 * 3600
+  def test_unpack
+    @app.unpack_grace = 2 * 3600
 
-    dir = "ep03"
-    @ng.join(dir).tap do |d|
+    title = "ep01"
+    dir = "_UNPACK_#{title}"
+    local_dir = @ng.join(dir).tap do |d|
       d.mkdir
-      f = d.join("some file")
-      f.write "test"
-      FileUtils.touch f, mtime: Time.now - 5 * 3600
+      d.join("some file").write "test"
     end
     @pvr.add_ev App::ST_GRABBED, {
       'date' => '2020',
       'data' => {'downloadClient' => "sabnzbd"},
-      'downloadId' => 'nzoid03',
-      'sourceTitle' => dir,
+      'downloadId' => 'nzoid01',
+      'sourceTitle' => title,
     }
+
+    ##
+    # Grace NOT expired
+    #
+    @app.cmd_prune
+
+    assert_equal %W[ ], @pvr.imported
+    assert_log :debug, ".*\\bunpacking.+mnt=#{MNT}/#{dir}"
+
+    ##
+    # Grace expired
+    #
+    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 3 * 3600
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
-    @pvr.set_has_file dir, false
+    @pvr.set_has_file title, true
 
     @app.cmd_prune
 
-    assert_log :error, ".*\\bdoesn't have files after.+mnt=#{MNT}/ep03"
+    assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
   end
 
   private def assert_log(level, pat)
@@ -127,9 +139,11 @@ class AppTest < Minitest::Test
     def history; @events end
     def add_ev(type, ev); @events << ev.merge("eventType" => type) end
     def add_import(mnt_dir, st); @imports[mnt_dir.to_s] = st end
+    def command(id); {"state" => @imports.fetch(id)} end
     def set_has_file(entity_id, ok); @has_files[entity_id] = ok end
+    def entity(id); {"hasFile" => @has_files.fetch(id)} end
     def history_entity_id(ev); ev.fetch "sourceTitle" end
-    def commands; [] end
+    def commands; [] end  # all finished
 
     def downloaded_scan(mnt_dir, **opts)
       mnt_dir = mnt_dir.to_s
@@ -137,14 +151,6 @@ class AppTest < Minitest::Test
         or raise "unexpected downloaded_scan: %p" % [mnt_dir]
       @imported << mnt_dir
       {"id" => mnt_dir}
-    end
-
-    def command(id)
-      {"state" => @imports.fetch(id)}
-    end
-
-    def entity(id)
-      {"hasFile" => @has_files.fetch(id)}
     end
   end
 end
