@@ -30,9 +30,25 @@ class App
     :unpack_grace,
     :status_io
 
+  class FreedStats
+    def initialize
+      @counts = {imports: 0, deletions: 0}
+      @total_freed = 0
+    end
+
+    attr_reader :counts, :total_freed
+
+    def add(type, size)
+      @counts[type] = @counts.fetch(type) + 1
+      @total_freed += size if size
+      self
+    end
+  end
+
   def cmd_prune
     imports = find_imports.group_by &:status
-    @log.info "stats: %p" % stats(imports)
+    @log.info "stats: %p" % import_stats(imports)
+    stats = FreedStats.new
 
     ##
     # Cleanup
@@ -43,7 +59,9 @@ class App
     %i[empty junk imported].each do |st|
       imports.delete(st) { [] }.each do |imp|
         imp.log.info "deleting #{st.upcase} dir" do
+          size = imp.dir.size
           App.fu :rm_r, imp.dir.local
+          stats.add :deletions, size
         end
       end
     end
@@ -52,12 +70,16 @@ class App
     # Queue imports
     #
     commands = Commands.new
+    sizes_before = {}
     imports.delete(:grabbed) { [] }.group_by(&:pvr).each do |pvr, imps|
       existing = pvr.commands.
         select { |c| c.fetch("name") == pvr.class::CMD_DOWNLOADED_SCAN }.
         sort_by { |c| c.fetch("started") }
       imps.each do |imp|
         imp_log = imp.log["import"]
+        imp_log[
+          size: sizes_before[imp] = imp.dir.size
+        ].debug "calculated size before import"
         cmd = existing.
           find { |c| c.fetch("body").fetch("path") == imp.dir.mnt.to_s }
         if cmd
@@ -75,7 +97,7 @@ class App
     # Refresh statuses
     #
     if @status_io.tty?
-      commands.live_statuses(io) { |imp| imp.dir.mnt }
+      commands.live_statuses(@status_io) { |imp| imp.dir.mnt }
     end
 
     ##
@@ -83,8 +105,15 @@ class App
     #
     commands.wait
     commands.last_statuses.each do |cmd, st|
-      cmd.obj.check_result st, grace: @import_grace
+      cmd.obj.check_result(st, grace: @import_grace) or next
+      freed = sizes_before[cmd.obj]
+      cmd.obj.log.info "freed %s" % [freed ? Utils::Fmt.size(freed) : "???"]
+      stats.add :imports, freed
     end
+    @log.info "freed %s after %s" % [
+      Utils::Fmt.size(stats.total_freed),
+      stats.counts.map { |s,n| "%d %s" % [n,s] }.join(", "),
+    ]
 
     ##
     # Sanity check
@@ -94,7 +123,7 @@ class App
     end
   end
 
-  private def stats(imports)
+  private def import_stats(imports)
     imports.each_with_object({}) do |(st, imps), h|
       h[st] =
         case st
@@ -304,6 +333,11 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
 
     def contents_mtime
       local_children.map(&:mtime).max || local.mtime
+    end
+
+    def size
+      Utils.du_bytes_retry local
+    rescue Utils::DUFailedError
     end
 
     private def empty?
