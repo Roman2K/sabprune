@@ -1,18 +1,28 @@
-$:.unshift __dir__
 require 'minitest/autorun'
-require 'main'
-require 'fileutils'
+require_relative 'imports'
 
-class AppTest < Minitest::Test
+module Imports
+
+class PrunerTest < Minitest::Test
   MNT = "/ng"
 
   def setup
     @pvr = TestPVR.new
     @ng = Pathname(Dir.mktmpdir)
-    @app = App.new @ng, MNT,
-      log: Utils::Log.new(@log_io = StringIO.new, level: :debug),
-      pvrs: {TestPVR: @pvr}
-    @app.status_io = File.open "/dev/null", 'w'
+  end
+
+  private def prune
+    log = Utils::Log.new \
+      @log_io = StringIO.new,
+      level: :debug
+    pruner = Pruner.new @ng, MNT, log: log do |p|
+      p.status_io = File.open "/dev/null", 'w'
+      p.import_grace = IMPORT_GRACE
+      p.unpack_grace = UNPACK_GRACE
+    end
+
+    @pvr.history.each { |ev| pruner.add_ev @pvr, ev }
+    pruner.prune
   end
 
   def teardown
@@ -22,7 +32,7 @@ class AppTest < Minitest::Test
   def test_prune_empty_dir
     @ng.join("_some empty dir").mkdir
 
-    @app.cmd_prune
+    prune
 
     assert_log :info, "deleting empty.*some empt"
   end
@@ -33,7 +43,7 @@ class AppTest < Minitest::Test
       d.mkdir
       d.join("some file").write "test"
     end
-    @pvr.add_ev App::ST_GRABBED, {
+    @pvr.add_ev Pruner::ST_GRABBED, {
       'date' => '2020',
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nzoid02',
@@ -42,21 +52,21 @@ class AppTest < Minitest::Test
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
     @pvr.set_has_file dir, true
 
-    @app.cmd_prune
+    prune
 
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
     assert_log :info, "deleting leftover files.+mnt=#{MNT}/#{dir}"
   end
 
-  def test_import_success_no_hasFile_grace
-    @app.import_grace = 4 * 3600
+  IMPORT_GRACE = 4
 
+  def test_import_success_no_hasFile_grace
     dir = "ep03"
     local_dir = @ng.join(dir).tap do |d|
       d.mkdir
       d.join("some file").write "test"
     end
-    @pvr.add_ev App::ST_GRABBED, {
+    @pvr.add_ev Pruner::ST_GRABBED, {
       'date' => '2020',
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nzoid03',
@@ -68,7 +78,7 @@ class AppTest < Minitest::Test
     ##
     # Grace NOT expired
     #
-    @app.cmd_prune
+    prune
 
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
     assert_log :warn, ".*\\bstill present, allowing.+mnt=#{MNT}/#{dir}"
@@ -76,24 +86,24 @@ class AppTest < Minitest::Test
     ##
     # Grace expired
     #
-    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 5 * 3600
+    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 5
 
-    @app.cmd_prune
+    prune
 
     assert_equal %W[ #{MNT}/#{dir} ] * 2, @pvr.imported
     assert_log :error, ".*\\bdoesn't have files after.+mnt=#{MNT}/#{dir}"
   end
 
-  def test_unpack
-    @app.unpack_grace = 2 * 3600
+  UNPACK_GRACE = 2
 
+  def test_unpack
     title = "ep01"
     dir = "_UNPACK_#{title}"
     local_dir = @ng.join(dir).tap do |d|
       d.mkdir
       d.join("some file").write "test"
     end
-    @pvr.add_ev App::ST_GRABBED, {
+    @pvr.add_ev Pruner::ST_GRABBED, {
       'date' => '2020',
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nzoid01',
@@ -103,7 +113,7 @@ class AppTest < Minitest::Test
     ##
     # Grace NOT expired
     #
-    @app.cmd_prune
+    prune
 
     assert_equal %W[ ], @pvr.imported
     assert_log :debug, ".*\\bunpacking.+mnt=#{MNT}/#{dir}"
@@ -111,11 +121,11 @@ class AppTest < Minitest::Test
     ##
     # Grace expired
     #
-    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 3 * 3600
+    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 3
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
     @pvr.set_has_file title, true
 
-    @app.cmd_prune
+    prune
 
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
   end
@@ -153,4 +163,66 @@ class AppTest < Minitest::Test
       {"id" => mnt_dir}
     end
   end
-end
+end # PrunerTest
+
+class CommandsTest < Minitest::Test
+  def test_live_statuses
+    io = StringIO.new
+    pvr = TestPVR.new commands_responses: [
+      [ {"id" => 99, "state" => "pending"},
+        {"id" => 1, "state" => "queued"} ],
+      [ {"id" => 99, "state" => "pending"},
+        {"id" => 1, "state" => "completed"} ],
+    ]
+    cmds = Commands[
+      Commands::Cmd[pvr, 1, "myobj"]
+    ]
+
+    cmds.live_statuses io, refresh: 0.01
+
+    assert_equal 2, io.string.scan(/myobj/).size
+    assert_equal 1, io.string.scan(/queued/).size
+    assert_equal 1, io.string.scan(/completed/).size
+
+    cmds.wait refresh: 60   # doesn't block
+  end
+
+  def test_wait
+    pvr = TestPVR.new commands_responses: [
+      [ {"id" => 99, "state" => "pending"},
+        {"id" => 1, "state" => "queued"} ],
+      [ {"id" => 99, "state" => "pending"},
+        {"id" => 1, "state" => "completed"} ],
+    ], command_responses: {
+      2 => [
+        {"id" => 2, "state" => "pending"},
+        {"id" => 2, "state" => "completed"},
+        {"id" => 2, "state" => "xxx"},
+      ],
+    }
+    cmds = Commands[
+      Commands::Cmd[pvr, 1, "foo"],
+      Commands::Cmd[pvr, 2, "bar"],
+    ]
+
+    cmds.wait refresh: 0.01
+
+    assert_equal [], pvr.commands_responses
+    assert_equal ["xxx"],
+      pvr.command_responses.fetch(2).map { |h| h.fetch("state") }
+  end
+
+  TestPVR = Struct.new(
+    :commands_responses, :command_responses, keyword_init: true,
+  ) do
+    def commands
+      commands_responses.shift || []
+    end
+
+    def command(id)
+      command_responses.fetch(id).shift or raise "no command response left"
+    end
+  end
+end # CommandsTest
+
+end # Imports
