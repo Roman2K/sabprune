@@ -7,20 +7,21 @@ class App
     @sab = sab
     @pvrs = pvrs
     @pruners = [
-      # -> { Incomplete::Pruner.new(ng) },
+      -> { Incomplete::Pruner.new(ng, mnt, sab: sab, log: log) },
       -> { Imports::Pruner.new(ng, mnt, log: log) },
     ]
   end
 
   def cmd_prune
     pruners = @pruners.map &:call
-    each_ev do |pvr, ev|
-      cont = true
-      pruners.each do |pr|
-        pr.add_ev pvr, ev
-        cont &&= pr.need_evs?
+    pruners.dup.tap do |handlers|
+      each_ev do |pvr, ev|
+        handlers.select! do |pr|
+          pr.add_ev pvr, ev
+          pr.need_evs?
+        end
+        break if handlers.empty?
       end
-      cont or break
     end
     pruners.each &:prune
   end
@@ -30,15 +31,12 @@ class App
       evs = pvr.history_events
       Fiber.new { evs.each { |ev| Fiber.yield pvr, ev } }
     end
-    loop do
-      hists.delete_if do |h|
-        item = h.resume
-        h.alive? or next true
-        yield item
-        false
-      end
-      break if hists.empty?
-    end
+    hists.select! do |h|
+      item = h.resume
+      h.alive? or next false
+      yield item
+      true
+    end until hists.empty?
   end
 end
 

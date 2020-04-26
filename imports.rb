@@ -1,6 +1,7 @@
 require 'utils'
 require 'fileutils'
 require 'pp'
+require_relative 'dl_dir'
 
 module Imports
 
@@ -19,14 +20,12 @@ class Pruner
   end
 
   def initialize(ng, mnt, log:)
-    @ng = Pathname ng
-    @mnt = Pathname mnt
     @import_grace = IMPORT_GRACE
     @unpack_grace = UNPACK_GRACE
     @status_io = $stdout
     @log = log
     yield self if block_given?
-    @imports = find_imports
+    @imports = find_imports Pathname(ng), Pathname(mnt)
   end
 
   attr_accessor \
@@ -36,14 +35,14 @@ class Pruner
 
   INCOMPLETE_DIR = "incomplete"
 
-  private def find_imports
+  private def find_imports(root, mnt)
     entries = {}
-    @ng.glob("*").sort.each do |f|
-      next if !f.directory?
+    root.glob("*").sort.each do |f|
+      next unless f.directory?
       basename = f.basename.to_s
       next if basename == INCOMPLETE_DIR
       imp = Import.new
-      imp.dir = Import::Dir[f, @mnt + f.relative_path_from(@ng)]
+      imp.dir = DLDir.from_local f, root: root, mnt: mnt
       imp.log = @log[mnt: imp.dir.mnt]
       if basename =~ /^_UNPACK_/
         basename = $'
@@ -85,7 +84,7 @@ class Pruner
   end
 
   def need_evs?
-    not @imports.values.all? &:status
+    @imports.any? { |_, imp| !imp.status }
   end
 
   class FreedStats
@@ -116,11 +115,11 @@ class Pruner
     end
     %i[empty junk imported].each do |st|
       imports.delete(st) { [] }.each do |imp|
+        size = imp.dir.size
         imp.log.info "deleting #{st.upcase} dir" do
-          size = imp.dir.size
           Pruner.fu :rm_r, imp.dir.local
-          stats.add :deletions, size
         end
+        stats.add :deletions, size
       end
     end
 
@@ -231,39 +230,6 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     log.info "deleting leftover files after import" do
       # Ignore errors due to late deletion by the PVR
       Pruner.fu :rm_rf, dir.local
-    end
-  end
-
-  Dir = Struct.new :local, :mnt do
-    def status
-      case
-      when empty? then :empty
-      when junk? then :junk
-      end
-    end
-
-    def contents_mtime
-      local_children.map(&:mtime).max || local.mtime
-    end
-
-    def size
-      Utils.du_bytes_retry local
-    rescue Utils::DUFailedError
-    end
-
-    private def empty?
-      local.glob("**/*") { return false }
-      true
-    end
-
-    private def junk?
-      local_children.all? do |f|
-        f.file? && f.basename.to_s =~ /^\d+-\d+(\.\d+)+$/
-      end
-    end
-
-    private def local_children
-      local.enum_for(:glob, "*")
     end
   end
 end
