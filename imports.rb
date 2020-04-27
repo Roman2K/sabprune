@@ -55,7 +55,7 @@ class Pruner
       basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
       if found = entries[basename]
         imp.log[found: found.dir.mnt.basename].
-          warn "superseding similarly-named dir, would delete on next run"
+          info "superseding similarly-named dir, would delete on next run"
       end
       entries[basename] = imp
     end
@@ -221,7 +221,7 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
         log.error "PVR doesn't have files after %s: import failed" \
           % [Utils::Fmt.duration(age)]
       else
-        log.warn "directory still present, allowing %s" \
+        log.info "directory still present, allowing %s" \
           % [Utils::Fmt.duration(grace - age)]
       end
       return
