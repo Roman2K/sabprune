@@ -7,16 +7,25 @@ SABnzbd. They either do a copy and leave source files behind, don't necessarily
 mark the files as imported, or don't even seem to trigger any import task at
 all.
 
-This program compensates for such mishaps. Also deletes empty \_UNPACK_ dirs and
-those left with only raw ng article files.
+This program compensates for such mishaps. Directories are matched against each
+PVR's grab and import history. Necessary imports are triggered and waited for
+until completion. Files left are double checked afterwards.
 
-Directories are matched against each PVR's grab and import history. Necessary
-imports are triggered and waited for until completion. Files left are double
-checked afterwards.
+Also:
 
-Example output:
+* cleans up leftovers in incomplete dir after finished downloads
+* cleans up empty \_UNPACK_ dirs
+* cleans up junk dirs containing only raw ng article files
 
-<img alt="Notifications" src="./screenshot.png" width="640"/>
+## Screenshots
+
+Disk usage from SABnzbd returning to zero:
+
+<img alt="Notifications" src="./screenshots/du.png" width="640"/>
+
+Triggered import commands:
+
+<img alt="Notifications" src="./screenshots/commands.png" width="640"/>
 
 ## Related
 
