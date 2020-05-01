@@ -78,6 +78,7 @@ class Pruner
       case st
       when ST_GRABBED then :grabbed
       when ST_IMPORTED then :imported
+      when ST_FAILED then :dl_failed
       else raise "unknown status: %p" % [st]
       end
     end
@@ -113,7 +114,7 @@ class Pruner
     imports.delete(nil) { [] }.each do |imp|
       imp.log.warn "found ORPHAN dir"
     end
-    %i[empty junk imported].each do |st|
+    %i[empty junk imported dl_failed].each do |st|
       imports.delete(st) { [] }.each do |imp|
         size = imp.dir.size
         imp.log.info "deleting #{st.upcase} dir" do
@@ -184,7 +185,7 @@ class Pruner
     imports.each_with_object({}) do |(st, imps), h|
       h[st] =
         case st
-        when :grabbed, :imported
+        when :grabbed, :imported, :dl_failed
           imps.group_by { |imp| imp.pvr.name }.transform_values &:size
         else
           imps.size
@@ -194,6 +195,7 @@ class Pruner
 
   ST_GRABBED = 'grabbed'
   ST_IMPORTED = 'downloadFolderImported'
+  ST_FAILED = 'downloadFailed'
 end
 
 class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
