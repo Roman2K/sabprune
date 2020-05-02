@@ -9,11 +9,12 @@ class Pruner
 
     @dls = find_downloads Pathname(ng), Pathname(mnt)
 
-    sab.queue.fetch("queue").fetch("slots").each do |ev|
+    sab.queue.each do |ev|
       add_sab_queue_ev(ev)
     end
-    sab.history.fetch("history").fetch("slots").each do |ev|
+    sab.history.each do |ev|
       add_sab_hist_ev(ev)
+      break if @dls.values.all? &:status
     end
   end
 
@@ -85,8 +86,31 @@ class SABnzbd
     @http.type_config.update json_in: false, json_out: true
   end
 
-  def history; @http.get([mode: "history"]) end
-  def queue; @http.get([mode: "queue"]) end
+  def history &block; get_slots({mode: "history"}, "history", &block) end
+  def queue &block; get_slots({mode: "queue"}, "queue", &block) end
+
+  LIMIT = 500
+
+  private def get_slots(params, key, &block)
+    return enum_for __method__, params, key unless block
+    start = 0
+    last_nzoid = nil
+    loop do
+      items = @http.get([params.merge(start: start, limit: LIMIT)]).
+        fetch(key).
+        fetch("slots")
+      if last_nzoid
+        idx = items.find_index { |i| i.fetch("nzo_id") == last_nzoid } \
+          or raise "slots moved too much since last iteration"
+        start += idx
+        items.slice! 0..idx
+      end
+      break if items.empty?
+      items.each &block
+      start += items.size - 1
+      last_nzoid = items.fetch(-1).fetch "nzo_id"
+    end
+  end
 end
 
 end # Incomplete
