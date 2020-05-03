@@ -39,7 +39,7 @@ class PrunerTest < Minitest::Test
 
   def test_import_success_leftovers
     dir = "ep02"
-    @ng.join(dir).tap do |d|
+    local_dir = @ng.join(dir).tap do |d|
       d.mkdir
       d.join("some file").write "test"
     end
@@ -55,6 +55,7 @@ class PrunerTest < Minitest::Test
     prune
 
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
+    refute local_dir.exist?
     assert_log :info, "deleting leftover files.+mnt=#{MNT}/#{dir}"
   end
 
@@ -69,7 +70,7 @@ class PrunerTest < Minitest::Test
     @pvr.add_ev Pruner::ST_GRABBED, {
       'date' => '2020',
       'data' => {'downloadClient' => "sabnzbd"},
-      'downloadId' => 'nzoid03',
+      'downloadId' => 'nZoiD03',
       'sourceTitle' => dir,
     }
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
@@ -81,17 +82,22 @@ class PrunerTest < Minitest::Test
     prune
 
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
-    assert_log :warn, ".*\\bstill present, allowing.+mnt=#{MNT}/#{dir}"
+    assert local_dir.exist?
+    assert_log :info, ".*\\bstill present, allowing.+mnt=#{MNT}/#{dir}"
 
     ##
-    # Grace expired
+    # Grace expired, mark failed IN QUEUE
     #
     FileUtils.touch local_dir.glob("*"), mtime: Time.now - 5
+    @pvr.add_to_queue "123", "NzOId03"
 
     prune
 
     assert_equal %W[ #{MNT}/#{dir} ] * 2, @pvr.imported
-    assert_log :error, ".*\\bdoesn't have files after.+mnt=#{MNT}/#{dir}"
+    refute local_dir.exist?
+    assert_equal ["123"], @pvr.queue_dels
+    assert_log :warn, ".*\\bdoesn't have files after.+mnt=#{MNT}/#{dir}"
+    assert_log :info, ".*\\bdeleting from queue.+queue_item=123"
   end
 
   UNPACK_GRACE = 2
@@ -139,16 +145,24 @@ class PrunerTest < Minitest::Test
     def initialize
       @events = []
       @imports = {}
-      @imported = []
+      @queue = []
       @has_files = {}
+
+      @imported = []
+      @queue_dels = []
     end
 
-    attr_reader :imported
+    attr_reader \
+      :imported,
+      :queue_dels
 
     def name; "test_pvr" end
     def history; @events end
+    def queue; @queue end
     def add_ev(type, ev); @events << ev.merge("eventType" => type) end
     def add_import(mnt_dir, st); @imports[mnt_dir.to_s] = st end
+    def add_to_queue(id, dl_id); @queue << {"id"=>id, "downloadId"=>dl_id} end
+    def queue_del(id, blacklist:); @queue_dels << id end
     def command(id); {"state" => @imports.fetch(id)} end
     def set_has_file(entity_id, ok); @has_files[entity_id] = ok end
     def entity(id); {"hasFile" => @has_files.fetch(id)} end

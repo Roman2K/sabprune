@@ -17,8 +17,8 @@ DLDir = Struct.new :local, :mnt do
   end
 
   def size
-    Utils.du_bytes_retry local
-  rescue Utils::DUFailedError
+    Utils::DU.bytes local
+  rescue Utils::DU::RaceCondError
   end
 
   private def empty?

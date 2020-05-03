@@ -90,7 +90,7 @@ class Pruner
 
   class FreedStats
     def initialize
-      @counts = {imports: 0, deletions: 0}
+      @counts = {imports: 0, deletions: 0, invalid_dl: 0}
       @total_freed = 0
     end
 
@@ -136,7 +136,7 @@ class Pruner
       imps.each do |imp|
         imp_log = imp.log["import"]
         imp_log[
-          size: sizes_before[imp] = imp.dir.size
+          size: Fmt.size_or_nil(sizes_before[imp] = imp.dir.size),
         ].debug "calculated size before import"
         cmd = existing.
           find { |c| c.fetch("body").fetch("path") == imp.dir.mnt.to_s }
@@ -152,6 +152,13 @@ class Pruner
     end
 
     ##
+    # Sanity check
+    #
+    unless imports.empty?
+      @log.error "unknown imports left: %s" % [PP.pp(imports, "").chomp]
+    end
+
+    ##
     # Refresh statuses
     #
     if @status_io.tty?
@@ -162,11 +169,25 @@ class Pruner
     # Check results
     #
     commands.wait
+    mark_failed = []
     commands.last_statuses.each do |cmd, st|
-      cmd.obj.check_result(st, grace: @import_grace) or next
-      freed = sizes_before[cmd.obj]
-      cmd.obj.log.info "freed %s" % [freed ? Utils::Fmt.size(freed) : "???"]
-      stats.add :imports, freed
+      imp = cmd.obj
+      st = imp.check_result(st, grace: @import_grace)
+      log = imp.log[import_status: st]
+      freed = sizes_before[imp]
+      case st
+      when /^ok/
+        log.info "imported %s" % Fmt.size_or_nil(freed)
+        stats.add :imports, freed
+      when :err, :grace
+        log.debug "ended"
+      when :invalid_dl
+        log.info "deleted %s of invalid download" % Fmt.size_or_nil(freed)
+        mark_failed << imp
+        stats.add :invalid_dl, freed
+      else
+        raise "unhandled status: %p" % [st]
+      end
     end
     @log.info "freed %s after %s" % [
       Utils::Fmt.size(stats.total_freed),
@@ -174,11 +195,24 @@ class Pruner
     ]
 
     ##
-    # Sanity check
+    # Mark failed
     #
-    unless imports.empty?
-      @log.error "unknown imports left: %s" % [PP.pp(imports, "").chomp]
+    queues = Hash.new { |cache, pvr| cache[pvr] = pvr.queue }
+    failed_count = 0
+    mark_failed.each do |imp|
+      qid = queues[imp.pvr].
+        find { |i| i.fetch("downloadId").downcase == imp.nzoid.downcase } \
+        &.fetch "id"
+      unless qid
+        imp.log.warn "item not found in PVR queue, couldn't mark failed"
+        next
+      end
+      imp.log[queue_item: qid].info "deleting from queue and blacklisting" do
+        imp.pvr.queue_del qid, blacklist: true
+        failed_count += 1
+      end
     end
+    @log.info "marked %d downloads as failed" % [failed_count]
   end
 
   private def import_stats(imports)
@@ -196,6 +230,12 @@ class Pruner
   ST_GRABBED = 'grabbed'
   ST_IMPORTED = 'downloadFolderImported'
   ST_FAILED = 'downloadFailed'
+
+  module Fmt
+    def self.size_or_nil(size)
+      size ? Utils::Fmt.size(size) : "???"
+    end
+  end
 end
 
 class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
@@ -210,29 +250,31 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
 
     if st.error?
       log.error "import command failed, not checking directory"
-      return
+      return :err
     end
 
     if !dir.local.directory?
       log.info "import succeeded"
-      return
+      return :ok
     end
+    status = :ok_leftovers
 
     if !entity.fetch("hasFile")
-      if (age = Time.now - dir.contents_mtime) > grace
-        log.error "PVR doesn't have files after %s: import failed" \
-          % [Utils::Fmt.duration(age)]
-      else
+      if (age = Time.now - dir.contents_mtime) <= grace
         log.info "directory still present, allowing %s" \
           % [Utils::Fmt.duration(grace - age)]
+        return :grace
       end
-      return
+      log.warn "PVR doesn't have files after %s: invalid download" \
+        % [Utils::Fmt.duration(age)]
+      status = :invalid_dl
     end
 
     log.info "deleting leftover files after import" do
       # Ignore errors due to late deletion by the PVR
       Pruner.fu :rm_rf, dir.local
     end
+    status
   end
 end
 

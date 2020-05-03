@@ -45,7 +45,7 @@ if $0 == __FILE__
   config = Utils::Conf.new "config.yml"
   log = Utils::Log.new $stderr, level: :info
   log.level = :debug if ENV["DEBUG"] == "1"
-  sab = Incomplete::SABnzbd.new URI(config[:sab]), log: log["sab"]
+  sab = Utils::SABnzbd.new URI(config[:sab]), log: log["sab"]
   pvrs = config[:pvrs].to_hash.map do |name, url|
     Utils::PVR.const_get(name).new(URI(url), log: log[name])
   end
