@@ -1,13 +1,14 @@
 require 'utils'
 require 'fileutils'
 require 'pp'
+require 'time'
 require_relative 'dl_dir'
 
 module Imports
 
 class Pruner
-  IMPORT_GRACE = 4 * 3600
-  UNPACK_GRACE = 2 * 3600
+  IMPORT_GRACE = 12 * 3600
+  UNPACK_GRACE = 4 * 3600
 
   FU = FileUtils
   FU_OPTS = {
@@ -70,8 +71,8 @@ class Pruner
     return if %i[empty junk].include? imp.status
     imp.pvr = pvr
     imp.entity_id = pvr.history_entity_id(ev)
-    cur_date = ev.fetch "date"
-    imp.date.nil? || imp.date < cur_date or return
+    cur_date = Time.parse ev.fetch "date"
+    return if imp.date && imp.date > cur_date
     imp.date = cur_date
     imp.nzoid = ev.fetch("downloadId")
     imp.status = ev.fetch("eventType").yield_self do |st|
@@ -260,7 +261,7 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
     status = :ok_leftovers
 
     if !entity.fetch("hasFile")
-      if (age = Time.now - dir.contents_mtime) <= grace
+      if (age = Time.now - [date, dir.contents_mtime].max) <= grace
         log.info "directory still present, allowing %s" \
           % [Utils::Fmt.duration(grace - age)]
         return :grace

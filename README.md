@@ -3,9 +3,9 @@
 > SABnzbd auto-cleanup after misfired imports by Radarr/Sonarr
 
 Often times, Radarr and Sonarr fail to properly import files downloaded by
-SABnzbd. They either do a copy and leave source files behind, don't necessarily
-mark the files as imported, or don't even seem to trigger any import task at
-all.
+SABnzbd. They either make a copy and leave source files behind, don't
+necessarily mark the files as imported, or don't even seem to trigger any import
+task at all.
 
 This program compensates for such mishaps. Directories are matched against each
 PVR's grab and import history. Necessary imports are triggered and waited for
