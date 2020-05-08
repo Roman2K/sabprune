@@ -13,10 +13,7 @@ DLDir = Struct.new :local, :mnt do
   end
 
   def contents_mtime
-    [local, *local_children].flat_map { |f|
-      stat = f.stat
-      [stat.mtime, stat.ctime]
-    }.max
+    [local, *local_children].map(&:mtime).max
   end
 
   def size

@@ -44,7 +44,7 @@ class PrunerTest < Minitest::Test
       d.join("some file").write "test"
     end
     @pvr.add_ev Pruner::ST_GRABBED, {
-      'date' => '2020',
+      'date' => Time.now.to_s,
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nzoid02',
       'sourceTitle' => dir,
@@ -68,7 +68,7 @@ class PrunerTest < Minitest::Test
       d.join("some file").write "test"
     end
     @pvr.add_ev Pruner::ST_GRABBED, {
-      'date' => '2020',
+      'date' => (Time.now - 999).to_s,
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nZoiD03',
       'sourceTitle' => dir,
@@ -88,7 +88,7 @@ class PrunerTest < Minitest::Test
     ##
     # Grace expired, mark failed IN QUEUE
     #
-    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 5
+    touch_dir_and_contents local_dir, mtime: Time.now - 5
     @pvr.add_to_queue "123", "NzOId03"
 
     prune
@@ -98,6 +98,10 @@ class PrunerTest < Minitest::Test
     assert_equal ["123"], @pvr.queue_dels
     assert_log :warn, ".*\\bdoesn't have files after.+mnt=#{MNT}/#{dir}"
     assert_log :info, ".*\\bdeleting from queue.+queue_item=123"
+  end
+
+  def touch_dir_and_contents(dir, **opts)
+    FileUtils.touch [dir, *dir.glob("*")], **opts
   end
 
   UNPACK_GRACE = 2
@@ -110,7 +114,7 @@ class PrunerTest < Minitest::Test
       d.join("some file").write "test"
     end
     @pvr.add_ev Pruner::ST_GRABBED, {
-      'date' => '2020',
+      'date' => (Time.now - 999).to_s,
       'data' => {'downloadClient' => "sabnzbd"},
       'downloadId' => 'nzoid01',
       'sourceTitle' => title,
@@ -127,7 +131,7 @@ class PrunerTest < Minitest::Test
     ##
     # Grace expired
     #
-    FileUtils.touch local_dir.glob("*"), mtime: Time.now - 3
+    touch_dir_and_contents local_dir, mtime: Time.now - 3
     @pvr.add_import "#{MNT}/#{dir}", Status::COMPLETED
     @pvr.set_has_file title, true
 
@@ -136,9 +140,8 @@ class PrunerTest < Minitest::Test
     assert_equal %W[ #{MNT}/#{dir} ], @pvr.imported
   end
 
-  private def assert_log(level, pat)
-    re = Regexp.new(" *#{Regexp.escape level} +#{pat}", Regexp::IGNORECASE)
-    assert_match re, @log_io.string
+  private def assert_log(*args, **opts)
+    assert_match Utils::Log.matcher(*args, **opts), @log_io.string
   end
 
   class TestPVR
