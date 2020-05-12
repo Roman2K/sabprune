@@ -65,7 +65,7 @@ class Pruner
     found = {}
     root.join(Imports::Pruner::INCOMPLETE_DIR).glob("*") do |f|
       next unless f.directory?
-      name = f.basename.to_s.sub /\.\d+$/, ""  # handle xxx.1 dirs
+      name = f.basename.to_s.sub /\.\d$/, ""  # handle xxx.1 dirs
       dir = DLDir.from_local f, root: root, mnt: mnt
       dl = found[name] ||= Download.new.tap { |d|
         d.dirs = []

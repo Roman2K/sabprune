@@ -53,7 +53,7 @@ class Pruner
         end
       end
       imp.status = imp.dir.status
-      basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
+      basename.sub! /\.\d$/, ""  # handle xxx.1 dirs
       if found = entries[basename]
         imp.log[found: found.dir.mnt.basename].
           info "superseding similarly-named dir, would delete on next run"
