@@ -18,6 +18,21 @@ class Pruner
     end
   end
 
+  private def find_downloads(root, mnt)
+    found = {}
+    root.join(Imports::Pruner::INCOMPLETE_DIR).glob("*") do |f|
+      next unless f.directory?
+      name = f.basename.to_s.sub /\.\d$/, ""  # handle xxx.1 dirs
+      dir = DLDir.from_local f, root: root, mnt: mnt
+      dl = found[name] ||= Download.new.tap { |d|
+        d.dirs = []
+        d.log = @log[name: dir.mnt.dirname.join("#{name}*")]
+      }
+      dl.dirs << DLDir.from_local(f, root: root, mnt: mnt)
+    end
+    found
+  end
+
   private def add_sab_queue_ev(ev)
     dl = @dls[ev.fetch "filename"] or return
     dl.status = :queued
@@ -59,21 +74,6 @@ class Pruner
       Utils::Fmt.size(freed),
       count,
     ]
-  end
-
-  private def find_downloads(root, mnt)
-    found = {}
-    root.join(Imports::Pruner::INCOMPLETE_DIR).glob("*") do |f|
-      next unless f.directory?
-      name = f.basename.to_s.sub /\.\d$/, ""  # handle xxx.1 dirs
-      dir = DLDir.from_local f, root: root, mnt: mnt
-      dl = found[name] ||= Download.new.tap { |d|
-        d.dirs = []
-        d.log = @log[name: dir.mnt.dirname.join("#{name}*")]
-      }
-      dl.dirs << DLDir.from_local(f, root: root, mnt: mnt)
-    end
-    found
   end
 end
 
