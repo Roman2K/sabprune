@@ -202,7 +202,7 @@ class Pruner
     failed_count = 0
     mark_failed.each do |imp|
       qid = queues[imp.pvr].
-        find { |i| i.fetch("downloadId").downcase == imp.nzoid.downcase } \
+        find { id = _1["downloadId"] and id.downcase == imp.nzoid.downcase } \
         &.fetch "id"
       unless qid
         imp.log.warn "item not found in PVR queue, couldn't mark failed"
