@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+src=hetax.srv:mnt/drive/media/films
+dest=_mnt/imports/films
+
+echo src=$src
+echo dest=$dest
+
+mkdir -v -p "$dest"
+[[ $(ls "$dest" | wc -l) = 0 ]]
+exec sshfs -f -d "$src" "$dest"

@@ -6,7 +6,7 @@ GIT
 
 GIT
   remote: https://github.com/Roman2K/utils-ruby.git
-  revision: 22161bd33e697fe22b827665de6b7bc10f3c08e5
+  revision: 46de059144412103d62cee322f612e93cbc98970
   specs:
     utils-ruby (0.1.0)
       net_http_unix (~> 0.2)
@@ -14,8 +14,13 @@ GIT
 GEM
   remote: https://rubygems.org/
   specs:
+    coderay (1.1.3)
+    method_source (1.0.0)
     minitest (5.14.0)
     net_http_unix (0.2.2)
+    pry (0.13.1)
+      coderay (~> 1.1)
+      method_source (~> 1.0)
 
 PLATFORMS
   ruby
@@ -23,6 +28,7 @@ PLATFORMS
 DEPENDENCIES
   metacli!
   minitest
+  pry
   utils-ruby!
 
 BUNDLED WITH

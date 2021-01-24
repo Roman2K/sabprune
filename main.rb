@@ -3,12 +3,12 @@ require_relative 'imports'
 require_relative 'incomplete'
 
 class App
-  def initialize(ng, mnt, sab:, pvrs: [], log:)
+  def initialize(ng, mnt, imports, sab:, pvrs: [], log:)
     @sab = sab
     @pvrs = pvrs
     @pruners = [
       -> { Incomplete::Pruner.new(ng, mnt, sab: sab, log: log) },
-      -> { Imports::Pruner.new(ng, mnt, log: log) },
+      -> { Imports::Pruner.new(ng, mnt, imports, log: log) },
     ]
   end
 
@@ -49,7 +49,7 @@ if $0 == __FILE__
   pvrs = config[:pvrs].to_hash.map do |name, url|
     Utils::PVR.const_get(name).new(URI(url), log: log[name])
   end
-  app = App.new config[:ng], config[:mnt],
+  app = App.new config[:ng], config[:mnt], config[:imports],
     pvrs: pvrs,
     sab: sab,
     log: log

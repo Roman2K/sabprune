@@ -20,12 +20,13 @@ class Pruner
     FU.public_send *args, **FU_OPTS, **opts, &block
   end
 
-  def initialize(ng, mnt, log:)
+  def initialize(ng, mnt, dest_dir, log:)
     @import_grace = IMPORT_GRACE
     @unpack_grace = UNPACK_GRACE
     @status_io = $stdout
     @log = log
-    yield self if block_given?
+
+    @dest_dir = Pathname(dest_dir)
     @imports = find_imports Pathname(ng), Pathname(mnt)
   end
 
@@ -53,26 +54,37 @@ class Pruner
         end
       end
       imp.status = imp.dir.status
-      basename.sub! /\.\d$/, ""  # handle xxx.1 dirs
+      basename.sub! /\.\d+$/, ""  # handle xxx.1 dirs
       if found = entries[basename]
         imp.log[found: found.dir.mnt.basename].
-          info "superseding similarly-named dir, would delete on next run"
+          info "not superseding similarly-named dir, would delete on next run"
+      else
+        entries[basename] = imp
       end
-      entries[basename] = imp
     end
     entries
   end
 
   def add_ev(pvr, ev)
     ev.fetch("data")&.[]("downloadClient")&.downcase == "sabnzbd" or return
+
     imp = @imports[ev.fetch "sourceTitle"] or return
     raise "PVR mismatch" unless [nil, pvr].include? imp.pvr
-    imp.log = imp.log[pvr: pvr.name]
-    return if %i[empty junk].include? imp.status
-    imp.pvr = pvr
-    imp.entity_id = pvr.history_entity_id(ev)
+
     cur_date = Time.parse ev.fetch "date"
     return if imp.date && imp.date > cur_date
+
+    imp.log = imp.log[pvr: pvr.name]
+    return if %i[empty junk].include? imp.status
+
+    imp.pvr = pvr
+    imp.entity_id = pvr.history_entity_id(ev)
+    imp.scannable_id = pvr.history_scannable_id(ev)
+    imp.dest_dir = begin
+      @dest_dir.join(pvr.history_dest_path(ev).sub(%r[^/+], ""))
+    rescue NotImplementedError
+    end
+
     imp.date = cur_date
     imp.nzoid = ev.fetch("downloadId")
     imp.status = ev.fetch("eventType").yield_self do |st|
@@ -148,7 +160,7 @@ class Pruner
           cmd = pvr.downloaded_scan imp.dir.mnt,
             download_client_id: imp.nzoid, import_mode: 'Move'
         end
-        commands << Commands::Cmd[pvr, cmd.fetch("id"), imp]
+        commands << Commands::Cmd.new(pvr, imp).tap { _1.id = cmd.fetch "id" }
       end
     end
 
@@ -169,25 +181,41 @@ class Pruner
     ##
     # Check results
     #
-    commands.wait
     mark_failed = []
-    commands.last_statuses.each do |cmd, st|
-      imp = cmd.obj
-      st = imp.check_result(st, grace: @import_grace)
-      log = imp.log[import_status: st]
-      freed = sizes_before[imp]
-      case st
-      when /^ok/
-        log.info "imported %s" % Fmt.size_or_nil(freed)
-        stats.add :imports, freed
-      when :err, :grace
-        log.debug "ended"
-      when :invalid_dl
-        log.info "deleted %s of invalid download" % Fmt.size_or_nil(freed)
-        mark_failed << imp
-        stats.add :invalid_dl, freed
-      else
-        raise "unhandled status: %p" % [st]
+    until commands.empty?
+      statuses = commands.wait
+      commands.clear
+      statuses.each do |cmd, st|
+        imp = cmd.obj
+        st = imp.check_result(st, grace: @import_grace)
+        log = imp.log[import_status: st]
+        freed = sizes_before[imp]
+        case st
+        when /^ok/
+          log.info "imported %s" % Fmt.size_or_nil(freed)
+          stats.add :imports, freed
+        when :err, :grace
+          if cmd.exec_count > 1
+            log.error "forced import failed"
+          else
+            log.info "normal import failed, forcing import"
+            begin
+              imp.copy_to_dest
+            rescue Import::CopyError
+              log[err: $!].error "couldn't copy files"
+            else
+              log.info "requesting PVR #{cmd.pvr} to scan files"
+              cmd.id = cmd.pvr.rescan(imp.scannable_id).fetch("id")
+              commands << cmd
+            end
+          end
+        when :invalid_dl
+          log.info "deleted %s of invalid download" % Fmt.size_or_nil(freed)
+          mark_failed << imp
+          stats.add :invalid_dl, freed
+        else
+          raise "unhandled status: %p" % [st]
+        end
       end
     end
     @log.info "freed %s after %s" % [
@@ -239,12 +267,40 @@ class Pruner
   end
 end
 
-class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
+class Import < Struct.new(
+  :pvr, :nzoid, :entity_id, :scannable_id, :status, :dir, :dest_dir, :date,
+  :log,
   keyword_init: true,
 )
   def entity
     pvr.entity entity_id
   end
+
+  def copy_to_dest
+    dest_dir \
+      or raise CopyError, "dest_dir not set, copy not supported for #{pvr.name}"
+    dest_dir.dirname.directory? \
+      or raise CopyError, "parent directory missing for #{dest_dir}"
+
+    src_files = dir.local.children.select &:file?
+    !src_files.empty? or raise CopyError, "source dir is empty"
+
+    Pruner.fu :mkdir_p, dest_dir
+    if (dst_sz = dest_dir.children.select(&:file?).sum(&:size)) \
+      >= (src_sz = src_files.sum(&:size)) \
+    then
+      log[{src: src_sz, dest: dst_sz}.transform_values { Utils::Fmt.size _1 }].
+        warn "destination >= source, not copying"
+      return
+    end
+
+    log[dest: dest_dir].info "copying #{src_files.size} files" do
+      system "rsync", "-a", *src_files.map(&:to_s), "#{dest_dir}/" \
+        or raise "rsync failed"
+    end
+  end
+
+  class CopyError < StandardError; end
 
   def check_result(st, grace:)
     log[status: st].info "import command finished"
@@ -280,7 +336,14 @@ class Import < Struct.new(:pvr, :entity_id, :dir, :log, :status, :date, :nzoid,
 end
 
 class Commands < Array
-  Cmd = Struct.new :pvr, :id, :obj
+  Cmd = Struct.new :pvr, :obj do
+    def initialize *; super; @exec_count = 0 end
+    def id=(id); old, @id = @id, id; @exec_count += 1 if id && id != old end
+    attr_reader :id, :exec_count
+  end
+
+  def statuses; @last_statuses = get_statuses.to_a end
+  def clear; @last_statuses = nil; super end
 
   DEFAULT_REFRESH_PERIOD = 1
 
@@ -324,10 +387,6 @@ class Commands < Array
     end
   end
 
-  def statuses
-    @last_statuses = get_statuses.to_a
-  end
-
   private def get_statuses
     return enum_for :get_statuses unless block_given?
     group_by(&:pvr).each do |pvr, cmds|
@@ -363,6 +422,7 @@ class Commands < Array
       sleep refresh
       sts = statuses 
     end
+    sts
   end
 end
 
