@@ -124,10 +124,8 @@ class Pruner
     ##
     # Cleanup
     #
-    imports.delete(nil) { [] }.each do |imp|
-      imp.log.warn "found ORPHAN dir"
-    end
-    %i[empty junk imported dl_failed].each do |st|
+    imports[:orphan] = imports.delete(nil) { [] }
+    %i[empty junk imported dl_failed orphan].each do |st|
       imports.delete(st) { [] }.each do |imp|
         size = imp.dir.size
         imp.log.info "deleting #{st.upcase} dir" do
