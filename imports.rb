@@ -120,6 +120,7 @@ class Pruner
     imports = @imports.values.group_by &:status
     @log.info "stats: %p" % import_stats(imports)
     stats = FreedStats.new
+    mark_failed = []
 
     ##
     # Cleanup
@@ -132,6 +133,7 @@ class Pruner
           Pruner.fu :rm_r, imp.dir.local
         end
         stats.add :deletions, size
+        mark_failed << imp if st != :imported && imp.pvr
       end
     end
 
@@ -155,8 +157,8 @@ class Pruner
           imp_log[id: cmd.fetch("id")].info "found running import command"
         else
           imp_log.info "running command"
-          cmd = pvr.downloaded_scan imp.dir.mnt,
-            download_client_id: imp.nzoid, import_mode: 'Move'
+          cmd = pvr.downloaded_scan imp.dir.mnt, download_client_id: imp.nzoid,
+            import_mode: :move
         end
         commands << Commands::Cmd.new(pvr, imp).tap { _1.id = cmd.fetch "id" }
       end
@@ -179,7 +181,6 @@ class Pruner
     ##
     # Check results
     #
-    mark_failed = []
     until commands.empty?
       statuses = commands.wait
       commands.clear
