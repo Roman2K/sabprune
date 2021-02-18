@@ -23,7 +23,6 @@ class Pruner
   def initialize(ng, mnt, dest_dir, log:)
     @import_grace = IMPORT_GRACE
     @unpack_grace = UNPACK_GRACE
-    @status_io = $stdout
     @log = log
 
     @dest_dir = Pathname(dest_dir)
@@ -32,8 +31,7 @@ class Pruner
 
   attr_accessor \
     :import_grace,
-    :unpack_grace,
-    :status_io
+    :unpack_grace
 
   INCOMPLETE_DIR = "incomplete"
 
@@ -182,13 +180,6 @@ class Pruner
     #
     unless imports.empty?
       @log.error "unknown imports left: %s" % [PP.pp(imports, "").chomp]
-    end
-
-    ##
-    # Refresh statuses
-    #
-    if @status_io.tty?
-      commands.live_statuses(@status_io) { |imp| imp.dir.mnt }
     end
 
     ##
@@ -358,48 +349,6 @@ class Commands < Array
   def statuses; @last_statuses = get_statuses.to_a end
   def clear; @last_statuses = nil; super end
 
-  DEFAULT_REFRESH_PERIOD = 1
-
-  def live_statuses(io, refresh: DEFAULT_REFRESH_PERIOD)
-    print = Fiber.new { print_live_statuses(io) }
-    print.resume
-    loop do
-      done = true
-      print.resume statuses.map { |cmd, st|
-        done &&= st.final?
-        s = cmd.obj
-        s = yield s if block_given?
-        [s, st]
-      }
-      break if done
-      sleep refresh
-    end
-    print.resume
-  end
-    
-  private def print_live_statuses(io)
-    io = Utils::IOUtils::Refresh.new io
-    last = Time.now
-
-    while sts = Fiber.yield
-      now = Time.now
-      elapsed = now - last
-      last = now
-
-      tbl = Utils::IOUtils::Table.new
-      tbl.col(0).align = :left
-      sts.
-        sort_by { |s, st| [s.to_s.downcase, st] }.
-        each { |s, st| tbl << [s, st] }
-
-      io.puts
-      io.puts "Last refresh: %s ago" % [Utils::Fmt.duration(elapsed)]
-      io.puts "Running commands:"
-      tbl.write_to io
-      io.flush
-    end
-  end
-
   private def get_statuses
     return enum_for :get_statuses unless block_given?
     group_by(&:pvr).each do |pvr, cmds|
@@ -428,6 +377,8 @@ class Commands < Array
   def last_statuses
     @last_statuses || statuses
   end
+
+  DEFAULT_REFRESH_PERIOD = 1
 
   def wait(refresh: DEFAULT_REFRESH_PERIOD)
     sts = last_statuses
