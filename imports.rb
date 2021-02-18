@@ -65,10 +65,25 @@ class Pruner
     entries
   end
 
+  private def find_ev_import(ev)
+    title = ev.fetch "sourceTitle"
+    alts = [title]
+    # Handle releases named with a trailing dot in the PVR
+    # (`Home.on.the.Range.2004.1080p.BluRay.DTS.x264-CyTSuNee.`) but get saved
+    # in a directory without the dot by SABnzbd.
+    if title =~ /\.+$/
+      alts << $`
+    end
+    alts.each do |t|
+      imp = @imports[t] and return imp
+    end
+    nil
+  end
+
   def add_ev(pvr, ev)
     ev.fetch("data")&.[]("downloadClient")&.downcase == "sabnzbd" or return
 
-    imp = @imports[ev.fetch "sourceTitle"] or return
+    imp = find_ev_import(ev) or return
     raise "PVR mismatch" unless [nil, pvr].include? imp.pvr
 
     cur_date = Time.parse ev.fetch "date"
@@ -120,7 +135,6 @@ class Pruner
     imports = @imports.values.group_by &:status
     @log.info "stats: %p" % import_stats(imports)
     stats = FreedStats.new
-    mark_failed = []
 
     ##
     # Cleanup
@@ -133,7 +147,6 @@ class Pruner
           Pruner.fu :rm_r, imp.dir.local
         end
         stats.add :deletions, size
-        mark_failed << imp if st != :imported && imp.pvr
       end
     end
 
@@ -181,6 +194,7 @@ class Pruner
     ##
     # Check results
     #
+    mark_failed = []
     until commands.empty?
       statuses = commands.wait
       commands.clear
