@@ -7,9 +7,6 @@ require_relative 'dl_dir'
 module Imports
 
 class Pruner
-  IMPORT_GRACE = 12 * 3600
-  UNPACK_GRACE = 4 * 3600
-
   FU = FileUtils
   FU_OPTS = {
     noop: false,
@@ -21,19 +18,14 @@ class Pruner
   end
 
   def initialize(ng, mnt, dest_dir, log:)
-    @import_grace = IMPORT_GRACE
-    @unpack_grace = UNPACK_GRACE
     @log = log
-
     @dest_dir = Pathname(dest_dir)
     @imports = find_imports Pathname(ng), Pathname(mnt)
   end
 
-  attr_accessor \
-    :import_grace,
-    :unpack_grace
-
   INCOMPLETE_DIR = "incomplete"
+  IMPORT_GRACE = 12 * 3600
+  UNPACK_GRACE = 4 * 3600
 
   private def find_imports(root, mnt)
     entries = {}
@@ -46,7 +38,7 @@ class Pruner
       imp.log = @log[mnt: imp.dir.mnt]
       if basename =~ /^_UNPACK_/
         basename = $'
-        if (rem = @unpack_grace - (Time.now - imp.dir.contents_mtime)) > 0
+        if (rem = UNPACK_GRACE - (Time.now - imp.dir.contents_mtime)) > 0
           imp.log.debug "unpacking, allowing %s" % [Utils::Fmt.duration(rem)]
           next
         end
@@ -129,7 +121,7 @@ class Pruner
     end
   end
 
-  def prune
+  def prune(pvrs)
     imports = @imports.values.group_by &:status
     @log.info "stats: %p" % import_stats(imports)
     stats = FreedStats.new
@@ -185,18 +177,19 @@ class Pruner
     ##
     # Check results
     #
-    mark_failed = []
+    queue_cleanup = []
     until commands.empty?
       statuses = commands.wait
       commands.clear
       statuses.each do |cmd, st|
         imp = cmd.obj
-        st = imp.check_result(st, grace: @import_grace)
+        st = imp.check_result(st, grace: IMPORT_GRACE)
         log = imp.log[import_status: st]
         freed = sizes_before[imp]
         case st
         when /^ok/
           log.info "imported %s" % Fmt.size_or_nil(freed)
+          queue_cleanup << [imp, false]
           stats.add :imports, freed
         when :err, :grace
           if cmd.exec_count > 1
@@ -215,7 +208,7 @@ class Pruner
           end
         when :invalid_dl
           log.info "deleted %s of invalid download" % Fmt.size_or_nil(freed)
-          mark_failed << imp
+          queue_cleanup << [imp, true]
           stats.add :invalid_dl, freed
         else
           raise "unhandled status: %p" % [st]
@@ -231,21 +224,58 @@ class Pruner
     # Mark failed
     #
     queues = Hash.new { |cache, pvr| cache[pvr] = pvr.queue }
-    failed_count = 0
-    mark_failed.each do |imp|
+    del_counts = {failed: 0, cleanup: 0}
+    def del_counts.inc! k; self[k] = self.fetch(k) + 1 end
+    queue_cleanup.each do |imp, is_failed|
       qid = queues[imp.pvr].
         find { id = _1["downloadId"] and id.downcase == imp.nzoid.downcase } \
         &.fetch "id"
       unless qid
-        imp.log.warn "item not found in PVR queue, couldn't mark failed"
+        imp.log.warn "item not found in PVR queue, couldn't " \
+          + (is_failed ? "mark failed" : "delete")
         next
       end
-      imp.log[queue_item: qid].info "deleting from queue and blacklisting" do
-        imp.pvr.queue_del qid, blacklist: true
-        failed_count += 1
+      imp.pvr.queue_del qid, blacklist: is_failed
+      ilog = imp.log[queue_item: qid]
+      if is_failed
+        ilog.info "marked as failed"
+        del_counts.inc! :failed
+      else
+        ilog.info "deleted from queue"
+        del_counts.inc! :cleanup
       end
     end
-    @log.info "marked %d downloads as failed" % [failed_count]
+
+    ##
+    # Queues cleanup
+    #
+    known = @imports.values.filter_map { _1.nzoid&.downcase }
+    queues.clear
+    pvrs.each do |pvr|
+      queues[pvr].each do |item|
+        next if known.include? item.fetch("downloadId").downcase
+        next unless err = queue_item_fatal_err(item)
+        @log[pvr][item: item.fetch("title"), err: err].
+          warn "no corresponding import found, marking as failed"
+        pvr.queue_del item.fetch("id"), blacklist: true
+        del_counts.inc! :failed
+      end
+    end
+
+    @log.info "queue deletions: " + del_counts.map { "#{_2} #{_1}" } * ", "
+  end
+
+  private def queue_item_fatal_err(item)
+    %w[protocol status trackedDownloadStatus].map { item.fetch _1 } \
+      == ["usenet", "Completed", "Warning"] \
+      or return
+    item.fetch("statusMessages").each do
+      msgs = _1.fetch "messages"
+      if msgs.any? /No files found/i
+        return msgs.join ", "
+      end
+    end
+    nil
   end
 
   private def import_stats(imports)

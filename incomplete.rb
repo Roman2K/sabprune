@@ -53,7 +53,7 @@ class Pruner
   def add_ev(pvr, ev); end
   def need_evs?; false end
 
-  def prune
+  def prune(pvrs)
     freed = count = 0
     @dls.each do |_, dl|
       unless [nil, :ended].include? dl.status 

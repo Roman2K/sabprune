@@ -23,7 +23,7 @@ class App
         break if handlers.empty?
       end
     end
-    pruners.each &:prune
+    pruners.each { _1.prune @pvrs }
   end
 
   private def each_ev
