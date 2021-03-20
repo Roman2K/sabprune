@@ -1,5 +1,14 @@
 ng: "~/windata/ng"
 mnt: "/ng"
+imports: "path/to/imports"
+sab: "http://sabnzbd.home/sabnzbd/api?apikey=SECRET"
 pvrs:
-  Radarr: "http://radarr.home/api?apikey=SECRET"
-  Sonarr: "http://sonarr.home/api?apikey=SECRET"
+  radarr:
+    type: Radarr
+    url: "http://radarr.home/api?apikey=SECRET"
+  radarrfr:
+    type: Radarr
+    url: "http://radarrfr.home/api?apikey=SECRET"
+  sonarr:
+    type: Sonarr
+    url: "http://sonarr.home/api?apikey=SECRET"

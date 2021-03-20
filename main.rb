@@ -46,8 +46,8 @@ if $0 == __FILE__
   log = Utils::Log.new $stderr, level: :info
   log.level = :debug if ENV["DEBUG"] == "1"
   sab = Utils::SABnzbd.new URI(config[:sab]), log: log["sab"]
-  pvrs = config[:pvrs].to_hash.map do |name, url|
-    Utils::PVR.const_get(name).new(URI(url), log: log[name])
+  pvrs = config[:pvrs].to_a.map do |name, c|
+    Utils::PVR.const_get(c[:type]).new(URI(c[:url]), log: log[name])
   end
   app = App.new config[:ng], config[:mnt], config[:imports],
     pvrs: pvrs,
