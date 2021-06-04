@@ -6,7 +6,7 @@ GIT
 
 GIT
   remote: https://github.com/Roman2K/utils-ruby.git
-  revision: 28db43bdb33c12e4b1829a70f121bc9b972e924b
+  revision: 551616f756520e81df8b2114ac686acb7d2d2cc2
   specs:
     utils-ruby (0.1.0)
       net_http_unix (~> 0.2)
@@ -16,7 +16,7 @@ GEM
   specs:
     coderay (1.1.3)
     method_source (1.0.0)
-    minitest (5.14.0)
+    minitest (5.14.4)
     net_http_unix (0.2.2)
     pry (0.13.1)
       coderay (~> 1.1)
@@ -32,4 +32,4 @@ DEPENDENCIES
   utils-ruby!
 
 BUNDLED WITH
-   2.1.4
+   2.2.15
