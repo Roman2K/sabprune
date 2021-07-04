@@ -1,5 +1,5 @@
 # --- Build image
-FROM ruby:2.7.1-alpine3.11 as builder
+FROM ruby:3.0.1-alpine3.12 as builder
 WORKDIR /app
 
 # bundle install deps
@@ -11,7 +11,7 @@ COPY Gemfile* ./
 RUN bundle
 
 # --- Runtime image
-FROM ruby:2.7.1-alpine3.11
+FROM ruby:3.0.1-alpine3.12
 WORKDIR /app
 
 COPY --from=builder /usr/local/bundle /usr/local/bundle

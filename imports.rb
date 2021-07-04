@@ -388,7 +388,7 @@ class Commands < Array
       }
       pvr.commands.each do |raw|
         cmd = cmds.delete(raw.fetch "id") or next
-        yield cmd, Status.new(raw.fetch "state")
+        yield cmd, Status.new(raw.fetch "status")
       end
       cmds.inject(Queue.new) { |q, kv| q << kv }.close.tap do |q| 
         Array.new(8) {
@@ -396,7 +396,7 @@ class Commands < Array
             Thread.current.abort_on_exception = true
             while (id, cmd = q.shift)
               raw = pvr.command id
-              yield cmd, Status.new(raw.fetch "state")
+              yield cmd, Status.new(raw.fetch "status")
             end
           end
         }.each &:join
@@ -420,13 +420,21 @@ class Commands < Array
   end
 end
 
-class Status < Struct.new :name
+class Status
   PROCESSING = %w[started queued]
   COMPLETED = "completed"
-  def processing?; PROCESSING.include? name end
+  OTHER = %w[failed]
+  def self.known = [*PROCESSING, COMPLETED, *OTHER]
+
+  def initialize(name)
+    self.class.known.include? name or raise "unknown status: #{name.inspect}"
+    @name = name
+  end
+
+  def processing?; PROCESSING.include? @name end
   def final?; !processing? end
-  def error?; final? && name != COMPLETED end
-  def to_s; name.to_s end
+  def error?; final? && @name != COMPLETED end
+  def to_s; @name.to_s end
 end
 
 end # Imports
